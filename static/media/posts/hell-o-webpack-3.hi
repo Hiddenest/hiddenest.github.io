@@ -1,0 +1,155 @@
+og---area
+title: 지옥에서 돌아온 Webpack3
+subtitle: 서비스 버전업은 정말 어렵습니다.
+ogImage: ./images/hell-o-webpack-3/cover.png
+tags: 개발
+created_at: 2017. 09. 14 14:13:47
+og---area
+
+
+## 기술부채를 청산하자
+에어브릿지의 프론트엔드를 개발하면서, 기능의 개발과 출시에만 집중하다보니 개발부채가 수북히 쌓이기 시작했습니다. 개발하면서 아쉬웠거나 정말 못짰다고 생각한 코드들도 쌓여갔고, 더 이상 이대로 부채를 늘려서는 안되겠다는 생각도 들었습니다.
+
+<figure>
+	<img class="meme" src="./images/hell-o-webpack-3/cant-handle.jpg" alt="네 이제 한계입니다">
+	<figcaption>네 이제 한계입니다</figcaption>
+</figure>
+
+## 근데 그게 맘처럼 안되네
+개발 부채를 청산하기 위해 여러 자료들을 찾아보면서, 현재 서비스 내에서 쓰고 있는 패키지들의 버전들이 오래된 것들이 많았고, 이 문제 때문에 일부 부채의 경우 청산이 불가능하다는 판단을 하게 되었습니다. 이에, 버전업에 시간이 오래 걸리는 패키지(react router 등)를 제외한 모든 패키지를 버전업하고 webpack의 버전을 1.13대에서 3으로 올리는 작업을 시작하였습니다.
+
+우선, 메인 패키지 매니저로 사용하고 있는 `yarn`에서 `yarn outdated`를 통해 현재 서비스에서 사용하고 있는 버전과 최신 버전의 상황을 진단하였습니다. 그 후 위에 설명한 대로 버전업에 시간이 걸리는 패키지를 따로 뺀 뒤, `yarn-upgrade-all`이라는 패키지를 통해 모든 패키지를 업데이트 하였습니다.
+
+가장 큰 문제는 (솔직히 지금도 헷갈리는 것은) webpack이었습니다. 한 번도 다뤄본적이 없는걸 다뤄야 하기에 조금 걱정이 많았습니다. 공식 문서가 불친절한 것 같아 필요한 경우를 제외하고는 Stephen Griender의 udemy 강의<a name="cm-1" href="#fn-1"><sup>1</sup></a> 와 zerocho님의 블로그 글<a name="cm-2" href="#fn-2"><sup>2</sup></a> 에 의지하며 처음으로 webpack을 공부했습니다.
+
+지금 눈앞에 보이는, 서비스에서 쓰이고 있는 V1과 V3를 비교하며 무엇이 크게 달라졌는지 비교할 수 있어서 더 빨리 습득이 되었던 것 같습니다.
+(옛날 코드와 지금 코드를 비교하며 공부하는 것도 시간이 없다면 좋은 학습 방법인 것 같습니다)
+
+## 맨땅에 헤딩은 아파요
+### 흐름을 읽어라
+개인적으로 webpack V3이 V1에 비해서 가지는 가장 큰 문법에서의 차이점은 **흐름을 읽을 수 있는가?** 인 것 같습니다. 적절한 예시를 아래의 두 가지로 들 수 있을 것 같습니다.
+
+#### rules
+V1에서는 `loaders`라고 쓰던 것이 V3에서는  `rules`로 이름이 바뀌었습니다. 문법적인 차이는 다음과 같습니다.
+
+* 한 string(‘’)에 몰아넣지 않는다 -> use-loader로 표현
+* query는 지양한다 -> options에 해당 query를 넣어주면 됨 (일부 구형 loader는 작동이 잘 안됨)
+
+다음과 같은 표현을 통해 어떤 loader를 사용하고, 그 loader에 어떤 옵션을 지정할 건지 한눈에 보며 흐름을 파악할 수 있어 좋은 것 같습니다. 아래의 예시는 CSS 파일에 대한 loader를 적용하는 것인데, 흐름을 읽기가 쉬워졌습니다.
+
+> 끝이 .css로 끝나는 파일에 대해서 -> production 모드일 경우에는 ExtractTextPlugin을 쓸껀데, `postcss-loader`를 쓰고 그 다음에 압축과 sourceMap 속성이 걸린 `css-loader`를 써보고, 에러 터지면 `style-loader`로 떨어지게 만들꺼야.
+> development 모드일 경우에는, postcss-loader -> css-loader -> style-loader 순서대로 써라.
+
+##### webpack V3
+
+```js
+rules: {
+	...rules,
+	{
+	  test: /\.css$/,
+  	  use: IS_PRODUCTION
+		? ExtractTextPlugin.extract({
+		  fallback: 'style-loader',
+		  use: [{
+			loader: 'css-loader',
+			options: {
+			  minimize: true,
+			  sourceMap: true,
+			},
+		  }, {
+			loader: 'postcss-loader',
+		  }],
+		})
+	  : ['style-loader', 'css-loader', 'postcss-loader'],
+	}
+}
+```
+
+##### webpack V1
+
+```js
+loaders: {
+	...loaders,
+	{
+	  test: /\.css$/,
+    loader: isDev(option)
+      ? 'style!css!postcss'
+      : ExtractTextPlugin.extract('style', 'css!postcss')
+	}
+}
+```
+
+#### resolve
+`resolve`는 약간 설명하기가 힘드나, 프로젝트 내에서 해당 폴더를 인식할 수 있게 해주거나(modules) 특정 단어를 경로, 변수로 치환해주거나(alias), 특정 확장자를 프로젝트 내에서 사용하지 않아도 되게 하는 등(extensions)의 설정을 할 수 있는 곳입니다.
+`modulesDirectories`가 사라진 대신, `modules` 에서 다음과 같이 잘 표현할 수 있으며, 이렇게 할 경우 특별히 root의 위치를 지정하지 않아도 되서 편합니다.
+
+##### webpack V3
+
+```js
+resolve: {
+  extensions: ['.js', '.jsx'],
+  modules: [
+    path.resolve(__dirname, 'src'),
+    'node_modules',
+  ],
+}
+```
+
+##### webpack V1
+
+```js
+resolve: {
+  extensions: ['', '.js', '.jsx'],
+  modulesDirectories: ['src', 'node_modules']
+}
+```
+
+
+### 강력한 압축능력
+webpack3에서 추가된 기본 제공 플러그인인 `ModuleConcatenationPlugin`과 기존에도 제공되던  `UglifyJSPlugin`의 옵션을 활용하면 엄청난 용량 감소를 보실 수 있습니다. 에어브릿지의 경우, 해당 플러그인의 적용을 통해 webpack1 대비 용량이 *1/3로 감소* 하였습니다.
+
+```js
+plugins: {
+  new webpack.optimize.ModuleConcatenationPlugin(),
+  new webpack.LoaderOptionsPlugin({
+    minimize: true,
+  }),
+  new webpack.optimize.UglifyJsPlugin({
+    compress: {
+      warnings: true,
+      // dead_code: true,
+      drop_debugger: true,
+      properties: true,
+      reduce_vars: true,
+    },
+  }),
+}
+```
+
+또한, devtool 옵션을 조정하는 것으로도 용량 측면에서 큰 차이를 볼 수 있습니다.
+production 모드에서 빌드할 경우, `source-map` 또는 `cheap-module-source-map`을 지정할 경우, 빌드 속도는 느리지만 용량이 줄어들며, `eval`로 설정할 경우 빌드 속도가 빠르지만 용량은 커집니다. 이 부분과 참고하며 보면 좋은 글이 있어 첨부합니다. <a name="cm-3" href="#fn-3"><sup>3</sup></a>
+
+## 그래서 올리고 나니까
+> 기분이 좋습니다.
+> 확실히 좋습니다.
+> 네, 그렇습니다.
+
+다만, 작업을 하면서 살짝 힘들었던 부분이 있다면, JavaScript의 경우, 코드의 분포가 심하다면(ex. ES5 이하부터 ES6 이후까지 모두 사용하는 프로젝트) UglifyJSPlugin의  `sourceMap`  옵션을 true로 지정했을 때 코드가 깨지는 현상이 있었습니다. ES5 이하 코드로  `typeof`가 `t()`라는 괴함수로 변경되어 에러를 내기도 했습니다.
+
+이외에도 autoprefixer가 어떤 SASS 파일에서는 잘 작동되지 않는다거나, CSS url()과 file-loader가 충돌이 나는 등 작업의 실수에서 일어난 것 같지만 원인이 무엇인지 파악하지 못한 문제들이 있었습니다. (이 문제들은 임시로 해결방법을 찾아 처리하였습니다.)
+
+기분이 좋은 이유는 또 하나 있었습니다. 용량을 최대한 줄이기 위해 불필요한 파일과 코드를 제거할 수 있었기 때문입니다. ~~헤헤헤~~
+
+## 결론과 기타 생각들
+이 의식의 흐름으로 쓴 글에 대한 결론을 말하자면, webpack의 버전을 올리는 일이 생각만큼 크게 어렵지는 않았습니다. 다른 프로젝트에서 만약 V1을 사용하고 있으시다면 약간의 trial & error를 통해 쉽게 버전을 올릴 수 있고, 이를 통해 오는 용량과 성능의 차이를 느끼실 수 있게 되실 것입니다.
+
+이번 작업을 하며 조금 아쉬웠던 것은, webpack에 대한 지식이 부족하다보니 코드 스플리팅(Code Splitting), 트리 쉐이킹(Tree Shaking)을 100% 활용하지 못한 것 같습니다. 이 둘을 잘 사용하면 용량을 더 줄이는 것부터, 많이 쓰지 않는 기능을 따로 파일로 분리해뒀다가 해당 기능을 요청했을 때만 불러오는 등, 서비스 내에서 초기 로딩 파일 용량을 줄이고 프론트엔드 환경을 동적으로 만들어 줄 수 있을 것이라고 생각합니다. 이 부분은 나중에 서비스 한 번 갈아엎을 때까지 연구해보고 적용해보려고 합니다.
+
+<figure>
+	<img src="./images/hell-o-webpack-3/cover.png" alt="Webpack3를 적용한 영광의 모습">
+	<figcaption>¯\\\_(ツ)\_/¯ webpack3 ¯\\\_(ツ)\_/¯</figcaption>
+</figure>
+
+<a name="fn-1"><sup>1</sup></a> [Webpack 2: The Complete Developer’s Guide | Udemy](https://www.udemy.com/webpack-2-the-complete-developers-guide/)<br>
+<a name="fn-2"><sup>2</sup></a> [Webpack 웹팩3(Webpack) 설정하기 - ZeroCho Blog](https://www.zerocho.com/category/Webpack/post/58aa916d745ca90018e5301d)<br>
+<a name="fn-3"><sup>3</sup></a> [(Webpack) devtool 옵션 퍼포먼스 | 오늘도 끄적끄적](https://perfectacle.github.io/2016/11/14/Webpack-devtool-option-Performance/)<br>
